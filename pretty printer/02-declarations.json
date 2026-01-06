@@ -1,0 +1,80 @@
+{
+  "type": "File",
+  "errors": [],
+  "program": {
+    "type": "Program",
+    "sourceType": "module",
+    "interpreter": null,
+    "body": [
+      {
+        "type": "VariableDeclaration",
+        "declarations": [
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "x" },
+            "init": null
+          }
+        ],
+        "kind": "var"
+      },
+      {
+        "type": "VariableDeclaration",
+        "declarations": [
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "y" },
+            "init": { "type": "NumericLiteral", "value": 2 }
+          }
+        ],
+        "kind": "var"
+      },
+      {
+        "type": "VariableDeclaration",
+        "declarations": [
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "z" },
+            "init": { "type": "StringLiteral", "value": "Hello, World!" }
+          }
+        ],
+        "kind": "var"
+      },
+      {
+        "type": "VariableDeclaration",
+        "declarations": [
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "a" },
+            "init": { "type": "NumericLiteral", "value": 1 }
+          },
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "b" },
+            "init": null
+          },
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "c" },
+            "init": { "type": "NullLiteral" }
+          }
+        ],
+        "kind": "var"
+      }
+    ],
+    "directives": []
+  },
+  "comments": [
+    {
+      "type": "CommentLine",
+      "value": " defines the variable x and assigns to it the special value \"undefined\" (not to be confused with an undefined value)"
+    },
+    {
+      "type": "CommentLine",
+      "value": " defines the variable y and assigns to it the value 2"
+    },
+    {
+      "type": "CommentLine",
+      "value": " defines the variable z and assigns to it a string entitled \"Hello, World!\""
+    }
+  ]
+}
