@@ -1,0 +1,57 @@
+{
+  "type": "File",
+  "errors": [],
+  "program": {
+    "type": "Program",
+    "sourceType": "module",
+    "interpreter": null,
+    "body": [
+      {
+        "type": "VariableDeclaration",
+        "declarations": [
+          {
+            "type": "VariableDeclarator",
+            "id": { "type": "Identifier", "name": "ken0" },
+            "init": {
+              "type": "ObjectExpression",
+              "properties": [
+                {
+                  "type": "ObjectProperty",
+                  "method": false,
+                  "key": { "type": "StringLiteral", "value": "nom" },
+                  "computed": false,
+                  "shorthand": false,
+                  "value": { "type": "StringLiteral", "value": "Ken Jones" }
+                },
+                {
+                  "type": "ObjectProperty",
+                  "method": false,
+                  "key": { "type": "StringLiteral", "value": "age" },
+                  "computed": false,
+                  "shorthand": false,
+                  "value": { "type": "NumericLiteral", "value": 39 }
+                },
+                {
+                  "type": "ObjectProperty",
+                  "method": false,
+                  "key": { "type": "StringLiteral", "value": "surnom" },
+                  "computed": false,
+                  "shorthand": false,
+                  "value": { "type": "StringLiteral", "value": "Kenny" }
+                }
+              ]
+            }
+          }
+        ],
+        "kind": "var"
+      }
+    ],
+    "directives": []
+  },
+  "comments": [
+    {
+      "type": "CommentLine",
+      "value": "var ken1 = { nom:   \"Ken Jones\", age:   39, surnom:   \"Kenny\" };"
+    }
+  ]
+}
