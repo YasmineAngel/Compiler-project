@@ -1,5 +1,6 @@
 import json
-
+class BreakException(Exception): pass
+class ContinueException(Exception): pass
 class Interpreter:
     def __init__(self, indent_size=4):
         self.env = {}
@@ -38,10 +39,13 @@ class Interpreter:
             return val
 
         if n_type == "FunctionDeclaration":
-            name = self.interpret(node.get('id'))
-            params = ", ".join(self.interpret(p) for p in node.get("params", []))
-            body = self.interpret(node.get('body'))
-            return f"function {name}({params}) {body}"
+            func_name = node.get('id').get('name')
+            self.env[func_name] = {
+                "params": node.get("params", []),
+                "body": node.get("body")
+            }
+            print(f"FunctionDeclaration: {func_name}")
+            return None
 
         # Control Flow
         if n_type == "IfStatement":
@@ -53,16 +57,29 @@ class Interpreter:
 
         if n_type == "WhileStatement":
             result = None
-            while self.interpret(node.get('test')):
-                 result = self.interpret(node.get('body'))
+            try:
+                while self.interpret(node.get('test')):
+                    try:
+                        result = self.interpret(node.get('body'))
+                    except ContinueException:
+                        continue 
+            except BreakException:
+                pass
             return result
         
         if n_type == "ForStatement":
-            init = self.interpret(node.get("init")).rstrip(";")
-            test = self.interpret(node.get("test"))
-            update = self.interpret(node.get("update"))
-            return f"for ({init}; {test}; {update}) {self.interpret(node.get('body'))}"
-
+          if node.get("init"):
+           self.interpret(node.get("init"))
+           result = None
+          while True:
+           if node.get("test"):
+             if not self.interpret(node.get("test")):
+              break
+           result = self.interpret(node.get("body"))
+           if node.get("update"):
+             self.interpret(node.get("update"))
+            
+          return result
         if n_type == "SwitchStatement":
             disc = self.interpret(node.get("discriminant"))
             self.indent_level += 1
@@ -187,8 +204,14 @@ class Interpreter:
         if n_type == "NullLiteral": return None
         if n_type == "ThisExpression": return "this"
         if n_type == "ReturnStatement": return f"return {self.interpret(node.get('argument'))};"
-        if n_type == "BreakStatement": return "break;"
-        if n_type == "ContinueStatement": return "continue;"
+        if n_type == "BreakStatement":
+            print("BreakStatement")
+            raise BreakException()
+
+        if n_type == "ContinueStatement":
+            print("ContinueStatement")
+            raise ContinueException()
+
         if n_type == "EmptyStatement": return ";"
 
         return f"/* Missing: {n_type} */"
@@ -201,12 +224,12 @@ def run_interpreter(path):
 
 
 # Running
-run_interpreter("01-expressions.json")
-run_interpreter("02-declarations.json")
-run_interpreter("03-while.json")
-run_interpreter("04-if-while.json")
+#run_interpreter("01-expressions.json")
+#run_interpreter("02-declarations.json")
+#run_interpreter("03-while.json")
+#run_interpreter("04-if-while.json")
 #run_interpreter("05-fors.json")
-#run_interpreter("06-while-break.json")
+run_interpreter("06-while-break.json")
 #run_interpreter("11-func.json")
 #run_interpreter("12-fact.json")
 #run_interpreter("13-switch.json")
