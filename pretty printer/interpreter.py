@@ -1,9 +1,25 @@
 import json
 class BreakException(Exception): pass
 class ContinueException(Exception): pass
+class Environment:
+    def __init__(self, parent=None):
+        self.variables = {}  # Local dictionary for this scope
+        self.parent = parent # Link to global/outer dictionary
+
+    def set(self, name, value):
+        """Always sets the variable in the CURRENT local scope."""
+        self.variables[name] = value
+
+    def get(self, name, default=None):
+        """Look in local scope first, then parent."""
+        if name in self.variables:
+            return self.variables[name]
+        if self.parent:
+            return self.parent.get(name, default)
+        return default if default is not None else "undefined"
 class Interpreter:
     def __init__(self, indent_size=4):
-        self.env = {}
+        self.env = Environment()
         self.indent_size = indent_size
         self.indent_level = 0
         self.precedence = {
@@ -34,16 +50,16 @@ class Interpreter:
             var_name = node.get("id").get("name")
             init_node = node.get("init")
             val = self.interpret(init_node) if init_node is not None else "undefined"
-            self.env[var_name] = val
+            self.env.set(var_name, val)
             print(f"VariableDeclaration: {var_name} {repr(val) if val != 'undefined' else 'undefined'}")
             return val
 
         if n_type == "FunctionDeclaration":
             func_name = node.get('id').get('name')
-            self.env[func_name] = {
+            self.env.set(func_name,  {
                 "params": node.get("params", []),
                 "body": node.get("body")
-            }
+            })
             print(f"FunctionDeclaration: {func_name}")
             return None
 
@@ -123,17 +139,17 @@ class Interpreter:
                 case "=":
                     var_name = node.get("left").get("name")
                     val = self.interpret(node.get("right"))
-                    self.env[var_name] = val
+                    self.env.set(var_name, val)
                     return val
                 case "+=":
                    var_name = node.get("left").get("name")
                    val = self.env.get(var_name, 0) + self.interpret(node.get("right"))
-                   self.env[var_name] = val
+                   self.env.set(var_name, val)
                    return val
                 case "-=":
                    var_name = node.get("left").get("name")
                    val = self.env.get(var_name, 0) - self.interpret(node.get("right"))
-                   self.env[var_name] = val
+                   self.env.set(var_name, val)
                    return val
                 case "+":   res = left + right
                 case "-":   res = left - right
@@ -164,7 +180,7 @@ class Interpreter:
              new_val = current_val
         
     
-           self.env[var_name] = new_val
+           self.env.set(var_name,new_val)
            return new_val
 
         if n_type == "UnaryExpression":
@@ -228,7 +244,7 @@ def run_interpreter(path):
 #run_interpreter("02-declarations.json")
 #run_interpreter("03-while.json")
 #run_interpreter("04-if-while.json")
-#run_interpreter("05-fors.json")
+run_interpreter("05-fors.json")
 run_interpreter("06-while-break.json")
 #run_interpreter("11-func.json")
 #run_interpreter("12-fact.json")
