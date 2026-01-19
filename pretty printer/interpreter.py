@@ -1,6 +1,9 @@
 import json
 class BreakException(Exception): pass
 class ContinueException(Exception): pass
+class ReturnException(Exception):
+    def __init__(self, value):
+        self.value = value
 class Environment:
     def __init__(self, parent=None):
         self.variables = {}  # Local dictionary for this scope
@@ -17,6 +20,13 @@ class Environment:
         if self.parent:
             return self.parent.get(name, default)
         return default if default is not None else "undefined"
+    def update(self, name, value):
+        if name in self.variables:
+            self.variables[name] = value
+        elif self.parent:
+            self.parent.update(name, value)
+        else:
+            self.variables[name] = value # Fallback to local if not found
 class Interpreter:
     def __init__(self, indent_size=4):
         self.env = Environment()
@@ -188,12 +198,29 @@ class Interpreter:
             return f"({node.get('operator')}{arg})"
 
         if n_type == "CallExpression":
-          callee_name = node.get('callee').get('name')
-          args = [self.interpret(a) for a in node.get("arguments", [])]
-    
-          if callee_name == "print" or callee_name == "console.log":
-             print(f"Print: {args[0]}")
-             return args[0]
+            callee_name = node.get('callee').get('name')
+            args = [self.interpret(a) for a in node.get("arguments", [])]
+
+            if callee_name in ["print", "console.log"]:
+                print(f"Print: {args[0]}")
+                return args[0]
+
+            func = self.env.get(callee_name)
+            if isinstance(func, dict):
+                old_env = self.env
+                self.env = Environment(parent=old_env) # Create local environment
+                
+                for i, param in enumerate(func['params']):
+                    self.env.set(param.get('name'), args[i]) # Map params to args
+                    
+                result = None
+                try:
+                    result = self.interpret(func['body']) # Execute body
+                except ReturnException as e:
+                    result = e.value # Capture the returned value
+                
+                self.env = old_env # Restore environment
+                return result
         
         # Objects & Classes
         if n_type == "MemberExpression":
@@ -219,7 +246,9 @@ class Interpreter:
         if n_type == "BooleanLiteral": return (node.get("value"))
         if n_type == "NullLiteral": return None
         if n_type == "ThisExpression": return "this"
-        if n_type == "ReturnStatement": return f"return {self.interpret(node.get('argument'))};"
+        if n_type == "ReturnStatement": 
+            val = self.interpret(node.get('argument'))
+            raise ReturnException(val)
         if n_type == "BreakStatement":
             print("BreakStatement")
             raise BreakException()
@@ -244,9 +273,9 @@ def run_interpreter(path):
 #run_interpreter("02-declarations.json")
 #run_interpreter("03-while.json")
 #run_interpreter("04-if-while.json")
-run_interpreter("05-fors.json")
-run_interpreter("06-while-break.json")
-#run_interpreter("11-func.json")
+#run_interpreter("05-fors.json")
+#run_interpreter("06-while-break.json")
+run_interpreter("11-func.json")
 #run_interpreter("12-fact.json")
 #run_interpreter("13-switch.json")
 #run_interpreter("14-obj.json")
