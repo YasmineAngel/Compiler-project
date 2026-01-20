@@ -183,7 +183,11 @@ class Interpreter:
                     if left_node.get("type") == "MemberExpression":
                         obj = self.interpret(left_node.get("object"))
                         if isinstance(obj, dict):
-                            prop = left_node.get("property").get("name") if not left_node.get("computed") else self.interpret(left_node.get("property"))
+                            if left_node.get("computed"):
+                                prop = self.interpret(left_node.get("property"))
+                            else:
+                                prop = left_node.get("property").get("name")
+                            
                             obj[prop] = val
                         return val
                     else:
@@ -192,33 +196,31 @@ class Interpreter:
                         return val
                 
                 case "+=":
-                    var_name = node.get("left").get("name")
-                    new_val = self.env.get(var_name, 0) + self.interpret(node.get("right"))
-                    self.env.update(var_name, new_val)
-                    return new_val
-                    
+                   var_name = node.get("left").get("name")
+                   val = self.env.get(var_name, 0) + self.interpret(node.get("right"))
+                   self.env.set(var_name, val)
+                   return val
                 case "-=":
-                    var_name = node.get("left").get("name")
-                    new_val = self.env.get(var_name, 0) - self.interpret(node.get("right"))
-                    self.env.update(var_name, new_val)
-                    return new_val
+                   var_name = node.get("left").get("name")
+                   val = self.env.get(var_name, 0) - self.interpret(node.get("right"))
+                   self.env.set(var_name, val)
+                   return val
+                case "+":   res = left + right
+                case "-":   res = left - right
+                case "*":   res = left * right
+                case "/":   res = left / right
+                case "==":  res = left == right
+                case "<":   res = left < right
+                case "&&":  res = left and right
+                case "||":  res = left or right
+                case "<":   res = left < right
+                case ">":   res = left > right
+                case "<=":  res = left <= right
+                case ">=":  res = left >= right
+                case "!==": res = left != right
+                case "!=": res = left != right
 
-                case "&&": return left and right
-                case "||": return left or right
-                case "+":   return left + right
-                case "-":   return left - right
-                case "*":   return left * right
-                case "/":   return left / right
-                case "==":  return left == right
-                case "!=":  return left != right
-                case "===": return left == right
-                case "!==": return left != right
-                case "<":   return left < right
-                case ">":   return left > right
-                case "<=":  return left <= right
-                case ">=":  return left >= right
-                
-            return None
+            return res
 
         if n_type == "UpdateExpression":
            var_name = node.get("argument").get("name")
@@ -301,9 +303,10 @@ class Interpreter:
 
                     if isinstance(func, dict):
                         new_instance = {}
+                        
                         old_env = self.env
                         self.env = Environment(parent=old_env)
-                        self.env.set("this", new_instance)
+                        self.env.set("this", new_instance) 
                         
                         for i, param in enumerate(func.get('params', [])):
                             self.env.set(param.get('name'), args[i])
@@ -314,19 +317,16 @@ class Interpreter:
                             if isinstance(e.value, dict):
                                 new_instance = e.value
                         
-                        self.env = old_env
+                        self.env = old_env 
                         return new_instance
-
-        if n_type == "ThisExpression":
-            return self.env.get("this")
 
         # Leaves
         if n_type == "Identifier": return self.env.get(node.get("name"))
         if n_type == "NumericLiteral": return node.get("value")
         if n_type == "StringLiteral": return node.get("value")
-        if n_type == "BooleanLiteral": return (node.get("value"))
+        if n_type == "BooleanLiteral": return node.get("value")
         if n_type == "NullLiteral": return None
-        if n_type == "ThisExpression": return "this"
+        if n_type == "ThisExpression": return self.env.get("this")
         if n_type == "ReturnStatement": 
             val = self.interpret(node.get('argument'))
             raise ReturnException(val)
