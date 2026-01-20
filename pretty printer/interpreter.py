@@ -28,8 +28,9 @@ class Environment:
         else:
             self.variables[name] = value # Fallback to local if not found
 class Interpreter:
-    def __init__(self, indent_size=4):
+    def __init__(self, indent_size=4,verbose=False):
         self.env = Environment()
+        self.verbose = verbose
         self.indent_size = indent_size
         self.indent_level = 0
         self.env.set("console", {"log": "built-in-print"})
@@ -62,14 +63,18 @@ class Interpreter:
             init_node = node.get("init")
             val = self.interpret(init_node) if init_node is not None else "undefined"
             self.env.set(var_name, val)
-            print(f"VariableDeclaration: {var_name} {repr(val) if val != 'undefined' else 'undefined'}")
+            trace_val = "function" if isinstance(val, dict) and "body" in val else val
+            if self.verbose:
+                print(f"  [Verbose] Declaring {var_name} as {trace_val}")
+            print(f"VariableDeclaration: {var_name} {trace_val}")
             return val
 
         if n_type == "FunctionDeclaration":
             func_name = node.get('id').get('name')
-            self.env.set(func_name,  {
+            self.env.set(func_name, {
                 "params": node.get("params", []),
-                "body": node.get("body")
+                "body": node.get("body"),
+                "closure_env": self.env  # Store the current scope
             })
             print(f"FunctionDeclaration: {func_name}")
             return None
@@ -160,11 +165,20 @@ class Interpreter:
         if n_type == "ExpressionStatement":
             expr = node.get("expression")
             res = self.interpret(expr)
-            is_print = (expr.get("type") == "CallExpression" and 
-                expr.get("callee", {}).get("name") in ["print", "console.log"])
-    
-            if res is not None and not is_print:
-                print(f"ExpressionStatement: {res}")
+            
+            is_print_func = (expr.get("type") == "CallExpression" and 
+                             expr.get("callee", {}).get("name") in ["print", "console.log"])
+            
+            if self.verbose:
+                print(f"  [Verbose] Expression Result: {res}")
+
+            if self.indent_level == 0 and res is not None and not is_print_func:
+                if expr.get("type") in ["BinaryExpression", "CallExpression", "NumericLiteral", "StringLiteral"]:
+                    if expr.get("type") in ["NumericLiteral", "StringLiteral"] and self.indent_level == 0:
+                         print(f"ExpressionStatement: {res}")
+                    elif expr.get("type") not in ["NumericLiteral", "StringLiteral"]:
+                         print(f"ExpressionStatement: {res}")
+            
             return res
 
         if n_type in ["BinaryExpression", "AssignmentExpression", "LogicalExpression"]:
@@ -174,7 +188,10 @@ class Interpreter:
                 curr_prec = self.precedence.get(op, 0)
                 left = self.interpret(node.get("left"), curr_prec)
                 right = self.interpret(node.get("right"), curr_prec)
-            
+
+            if self.verbose and n_type != "AssignmentExpression":
+                print(f"  [Verbose] BinaryOp: {left} {op} {right}")
+
             match op:
                 case "=":
                     left_node = node.get("left")
@@ -196,16 +213,31 @@ class Interpreter:
                         return val
                 
                 case "+=":
-                   var_name = node.get("left").get("name")
-                   val = self.env.get(var_name, 0) + self.interpret(node.get("right"))
-                   self.env.set(var_name, val)
-                   return val
+                    var_name = node.get("left").get("name")
+                    right_val = self.interpret(node.get("right"))
+                    old_val = self.env.get(var_name, 0)
+                    new_val = old_val + right_val
+                    
+                    if self.verbose:
+                        print(f"  [Verbose] Assignment: {var_name} += {right_val} (Result: {new_val})")
+                    
+                    self.env.set(var_name, new_val)
+                    return new_val
+                
+
                 case "-=":
-                   var_name = node.get("left").get("name")
-                   val = self.env.get(var_name, 0) - self.interpret(node.get("right"))
-                   self.env.set(var_name, val)
-                   return val
-                case "+":   res = left + right
+                    var_name = node.get("left").get("name")
+                    right_val = self.interpret(node.get("right"))
+                    old_val = self.env.get(var_name, 0)
+                    new_val = old_val - right_val
+                    
+                    if self.verbose:
+                        print(f"  [Verbose] Assignment: {var_name} -= {right_val} (Result: {new_val})")
+                    
+                    self.env.set(var_name, new_val)
+                    return new_val
+
+                case "+": res = left + right
                 case "-":   res = left - right
                 case "*":   res = left * right
                 case "/":   res = left / right
@@ -232,7 +264,9 @@ class Interpreter:
              new_val = current_val - 1
            else:
              new_val = current_val
-        
+
+           if self.verbose:
+                print(f"  [Verbose] Update: {var_name} {op} (from {current_val} to {new_val})")
     
            self.env.set(var_name,new_val)
            return new_val
@@ -242,21 +276,33 @@ class Interpreter:
             return f"({node.get('operator')}{arg})"
 
         if n_type == "CallExpression":
-            callee_name = node.get('callee').get('name')
+            callee_node = node.get('callee')
+            func = self.interpret(callee_node) 
             args = [self.interpret(a) for a in node.get("arguments", [])]
 
-            if callee_name in ["print", "console.log"]:
+            if self.verbose:
+                func_name = callee_node.get("name") if callee_node.get("type") == "Identifier" else "anonymous"
+                print(f"  [Verbose] Calling '{func_name}' with arguments: {args}")
+
+
+            # 2. Check for built-ins first
+            if callee_node.get("type") == "Identifier" and callee_node.get("name") in ["print", "console.log"]:
                 print(f"Print: {args[0]}")
                 return args[0]
 
-            func = self.env.get(callee_name)
-            if isinstance(func, dict):
+            # 3. Execute the function stored in 'func'
+            if isinstance(func, dict) and "body" in func:
                 old_env = self.env
-                self.env = Environment(parent=old_env)
+
+                if self.verbose:
+                    print(f"  [Verbose] Swapping to function scope (Static Scoping)")
+
+                # Use static scoping via closure_env
+                self.env = Environment(parent=func.get("closure_env", old_env))
                 
-                for i, param in enumerate(func['params']):
+                for i, param in enumerate(func.get('params', [])):
                     self.env.set(param.get('name'), args[i])
-                    
+                
                 result = None
                 try:
                     result = self.interpret(func['body'])
@@ -321,7 +367,10 @@ class Interpreter:
                         return new_instance
 
         # Leaves
-        if n_type == "Identifier": return self.env.get(node.get("name"))
+        if n_type == "Identifier": 
+            if self.verbose:
+                print(f"  [Verbose] Resolve Identifier: '{node.get('name')}'-> {self.env.get(node.get("name"))}")
+            return self.env.get(node.get("name"))
         if n_type == "NumericLiteral": return node.get("value")
         if n_type == "StringLiteral": return node.get("value")
         if n_type == "BooleanLiteral": return node.get("value")
@@ -341,11 +390,17 @@ class Interpreter:
         if n_type == "EmptyStatement": return ";"
 
         return f"/* Missing: {n_type} */"
+    
+
 
 # usage function
-def run_interpreter(path):
-    with open(path, "r") as f:
-        Interpreter().interpret(json.load(f))
+def run_interpreter(path, verbose=False):
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+            Interpreter(verbose=verbose).interpret(data)
+    except Exception as e:
+        print(f"Error: {e}")
 
 
 
@@ -360,7 +415,20 @@ def run_interpreter(path):
 #run_interpreter("12-fact.json")
 #run_interpreter("13-switch.json")
 #run_interpreter("14-obj.json")
-run_interpreter("15-new.json")
+#run_interpreter("15-new.json")
 #run_interpreter("16-funcs.json")
 #run_interpreter("17-double-parenth-func.json")
-#run_interpreter("18-func-in-func.json")cd
+#run_interpreter("18-func-in-func.json")
+
+import sys
+import json
+if __name__ == "__main__":
+
+    verbose_mode = "-verbose" in sys.argv
+    
+    args = [a for a in sys.argv[1:] if a != "-verbose"]
+    
+    if args:
+        run_interpreter(args[0], verbose=verbose_mode)
+    else:
+        print("Usage: py interpreter.py [-verbose] filename.json")
