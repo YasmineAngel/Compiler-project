@@ -223,7 +223,7 @@ class Compiler:
         return f"/* Missing: {n_type} */"
 
 script_dir = os.path.dirname(__file__) 
-file_path = os.path.join(script_dir, '03-while.json')
+file_path = os.path.join(script_dir, '04-if-while.json')
 
 with open(file_path, 'r') as f:
     ast = json.load(f)
