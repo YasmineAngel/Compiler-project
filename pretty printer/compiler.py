@@ -46,12 +46,14 @@ class Compiler:
                 ".global main",
                 "main:",
                 "    pushq %rbp", 
-                "    movq %rsp, %rbp"])
+                "    movq %rsp, %rbp",
+                "    subq $48, %rsp"
+                ])
             
             
             # Footer: Clean up stack and return
             footer = [
-                "    movq %rbp, %rsp",
+                "    addq $48, %rsp",
                 "    popq %rbp",
                 "    ret"
             ]
@@ -99,7 +101,6 @@ class Compiler:
                     asm.append("    movq $0, %rax") # Default to 0/undefined
                 
                 # Move value from %rax to the stack location
-                asm.append(f"    subq $8, %rsp") # Grow physical stack
                 asm.append(f"    movq %rax, {self.locals[var_name]}(%rbp)")
             
             return "\n".join(asm)
@@ -134,8 +135,50 @@ class Compiler:
             ]
             return "\n".join(asm)
         
+
+        if n_type == "IfStatement":
+            label_else = self.get_new_label()
+            label_end = self.get_new_label()
+            
+            # 1. Compile the test (e.g., x != 0)
+            op = node["test"]["operator"]
+            jump_map = {
+                "<": "jge", ">": "jle", "==": "jne", 
+                "!=": "je", "<=": "jg", ">=": "jl"
+            }
+            jump_instr = jump_map.get(op, "je")
+
+            asm = [
+                self.compile(node["test"]),     # Generates the cmpq
+                f"    {jump_instr} {label_else}", # Jump to else if false
+                self.compile(node["consequent"]), # Then block
+                f"    jmp {label_end}",           # Skip else block
+                f"{label_else}:",
+                self.compile(node.get("alternate")), # Else block (if any)
+                f"{label_end}:"
+            ]
+            return "\n".join(asm)
+        
         if n_type == "BlockStatement":
             return "\n".join([self.compile(s) for s in node.get("body", [])])
+        
+        if n_type == "AssignmentExpression":
+            target_name = node["left"]["name"]
+            offset = self.locals.get(target_name)
+            op = node["operator"]
+            
+            # 1. Compile the right-hand side (value goes to %rax)
+            asm = [self.compile(node["right"])]
+            
+            # 2. Apply the operation to the memory location
+            if op == "=":
+                asm.append(f"    movq %rax, {offset}(%rbp)")
+            elif op == "+=":
+                asm.append(f"    addq %rax, {offset}(%rbp)")
+            elif op == "-=":
+                asm.append(f"    subq %rax, {offset}(%rbp)")
+            
+            return "\n".join(asm)
 
         if n_type == "NumericLiteral":
             val = node.get("value")
@@ -149,8 +192,22 @@ class Compiler:
             return f"    {op} {offset}(%rbp)"
         
         if n_type == "CallExpression":
-            arg_name = node["arguments"][0]["name"]
-            return f"    # print({arg_name}) - System call or printf would go here"
+            callee = node["callee"]["name"]
+            if callee == "print":
+                # 1. Get the variable value into %rax (using Identifier logic)
+                arg_asm = self.compile(node["arguments"][0])
+                # 2. Add the format string to data section if not already there
+                fmt_label = ".LC_PRINT_INT"
+                if f'{fmt_label}: .string "%d\\n"' not in self.data_section:
+                    self.data_section.append(f'{fmt_label}: .string "%d\\n"')
+                
+                asm = [
+                    arg_asm,
+                    f"    movq %rax, %rdx",      # Second argument: the number
+                    f"    leaq {fmt_label}(%rip), %rcx", # First argument: format string
+                    "    call printf"        # Call C library function
+                ]
+                return "\n".join(asm)
         
         if n_type == "StringLiteral":
             label = self.get_new_string_label()
