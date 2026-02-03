@@ -8,6 +8,7 @@ class Compiler:
         self.data_section = []
         self.string_count = 0
         self.label_count = 0
+        self.loop_stack = []
 
     def get_new_string_label(self):
         label = f".LC{self.string_count}"
@@ -110,9 +111,22 @@ class Compiler:
             offset = self.locals.get(name)
             return f"    movq {offset}(%rbp), %rax"
         
+
+        if n_type == "BreakStatement":
+            if not self.loop_stack: return "    # Error: break outside loop"
+            _, end_label = self.loop_stack[-1]
+            return f"    jmp {end_label}"
+
+        if n_type == "ContinueStatement":
+            if not self.loop_stack: return "    # Error: continue outside loop"
+            start_label, _ = self.loop_stack[-1]
+            return f"    jmp {start_label}"
+        
         if n_type == "WhileStatement":
             start_label = self.get_new_label()
             end_label = self.get_new_label()
+            # Register this loop so break/continue know where to go
+            self.loop_stack.append((start_label, end_label))
             # Use a map to choose the 'inverse' jump (jump if the condition is FALSE)
             op = node["test"]["operator"]
             jump_map = {
@@ -133,8 +147,9 @@ class Compiler:
                 f"    jmp {start_label}",
                 f"{end_label}:"
             ]
+            self.loop_stack.pop() # Remove loop from stack when done
             return "\n".join(asm)
-        
+
 
         if n_type == "IfStatement":
             label_else = self.get_new_label()
@@ -150,13 +165,17 @@ class Compiler:
 
             asm = [
                 self.compile(node["test"]),     # Generates the cmpq
-                f"    {jump_instr} {label_else}", # Jump to else if false
-                self.compile(node["consequent"]), # Then block
-                f"    jmp {label_end}",           # Skip else block
-                f"{label_else}:",
-                self.compile(node.get("alternate")), # Else block (if any)
-                f"{label_end}:"
+                f"    {jump_instr} {label_else}", # Jump to ELSE if condition is FALSE
+                self.compile(node["consequent"]),
             ]
+
+            if node.get("alternate"):
+                asm.append(f"    jmp {label_end}")
+                asm.append(f"{label_else}:")
+                asm.append(self.compile(node["alternate"]))
+                asm.append(f"{label_end}:")
+            else:
+                asm.append(f"{label_else}:") # Just a label to skip the 'if' body
             return "\n".join(asm)
         
         if n_type == "BlockStatement":
@@ -179,7 +198,43 @@ class Compiler:
                 asm.append(f"    subq %rax, {offset}(%rbp)")
             
             return "\n".join(asm)
+        
 
+        # --- NEW: For Loop ---
+        if n_type == "ForStatement":
+            start_label = self.get_new_label()
+            update_label = self.get_new_label() # Continue jumps here
+            end_label = self.get_new_label()
+            self.loop_stack.append((update_label, end_label))
+            # 1. Initialization (run once)
+            init_code = self.compile(node.get("init"))
+            
+            # 2. Test (the condition)
+            # Assuming BinaryExpression used for test
+            test_op = node["test"]["operator"]
+            jump_map = {
+                "<": "jge", ">": "jle", "==": "jne", 
+                "!=": "je", "<=": "jg", ">=": "jl"
+            }
+            jump_instr = jump_map.get(test_op, "jge")
+            
+            asm = [
+                init_code,
+                f"{start_label}:",
+                self.compile(node.get("test")), # Generates the cmpq
+                f"    {jump_instr} {end_label}",
+                self.compile(node.get("body")),
+                # 3. Update (run after body, before jumping back)
+                self.compile(node.get("update")),
+                f"    jmp {start_label}",
+                f"{end_label}:"
+            ]
+            self.loop_stack.pop()
+            return "\n".join(asm)
+
+        if n_type == "EmptyStatement" or n_type == "FunctionDeclaration":
+            return "" # Ignore these for now
+        
         if n_type == "NumericLiteral":
             val = node.get("value")
             # In x86-64, %rax is where the program looks for the return value
@@ -223,7 +278,7 @@ class Compiler:
         return f"/* Missing: {n_type} */"
 
 script_dir = os.path.dirname(__file__) 
-file_path = os.path.join(script_dir, '04-if-while.json')
+file_path = os.path.join(script_dir, '06-while-break.json')
 
 with open(file_path, 'r') as f:
     ast = json.load(f)
