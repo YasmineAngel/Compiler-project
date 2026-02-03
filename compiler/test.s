@@ -1,7 +1,4 @@
 .text
-.section .rodata
-.LC0: .string "Hello, World!"
-.text
 .global main
 main:
     pushq %rbp
@@ -9,22 +6,18 @@ main:
     movq $0, %rax
     subq $8, %rsp
     movq %rax, -8(%rbp)
-    movq $2, %rax
-    subq $8, %rsp
-    movq %rax, -16(%rbp)
-    leaq .LC0(%rip), %rax
-    subq $8, %rsp
-    movq %rax, -24(%rbp)
-    movq $1, %rax
-    subq $8, %rsp
-    movq %rax, -32(%rbp)
-    movq $0, %rax
-    subq $8, %rsp
-    movq %rax, -40(%rbp)
-    movq $0, %rax
-    subq $8, %rsp
-    movq %rax, -48(%rbp)
+.L0:
+    movq -8(%rbp), %rax
+    pushq %rax
+    movq $10, %rax
+    movq %rax, %rcx
+    popq %rax
+    cmpq %rcx, %rax
+    jge .L1
+    incq -8(%rbp)
+    # print(x) - System call or printf would go here
+    jmp .L0
+.L1:
     movq %rbp, %rsp
     popq %rbp
     ret
-    
