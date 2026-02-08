@@ -1,7 +1,7 @@
 import json 
 import os
-import LabelManager
-import Environment
+from LabelManager import LabelManager
+from Environment import Environment
 
 class Compiler:
     def __init__(self):
@@ -21,18 +21,27 @@ class Compiler:
             return self.compile(node.get("program"))
 
         if n_type == "Program":
-            # Compile body
-            body = [self.compile(s) for s in node.get("body", [])]
-            # Calculate total space needed (number of vars * 8)
-            total_space = len(self.env.variables) * 8
-            aligned_space = (total_space + 15) & ~15
-            stack_size = max(aligned_space, 16)
+            funcs = []
+            main_body = []
+            for s in node.get("body", []):
+                if s["type"] == "FunctionDeclaration":
+                    funcs.append(self.compile(s))
+                else:
+                    # Compile body
+                    main_body.append(self.compile(s))
+            header = [".text"] + funcs
+
             # Header instructions
-            header = [".text"]
             if self.data_section:
                 header.append(".section .rodata")
                 header.extend(self.data_section)
                 header.append(".text")
+
+            # Calculate total space needed (number of vars * 8)
+            total_space = len(self.env.variables) * 8
+            aligned_space = (total_space + 15) & ~15
+            stack_size = max(aligned_space, 16)
+
             header.extend([
                 ".global main",
                 "main:",
@@ -48,7 +57,7 @@ class Compiler:
                 "    popq %rbp",
                 "    ret"
             ]
-            return "\n".join(header + body + footer)
+            return "\n".join(header + main_body + footer)
 
         # Handle a single number (The Leaf)
         if n_type == "ExpressionStatement":
@@ -68,12 +77,47 @@ class Compiler:
             # Perform the operation
             if op == "+":
                 asm.append("    addq %rcx, %rax")
+            elif op =="-":
+                asm.append("    subq %rcx, %rax")
             elif op == "*":
                 asm.append("    imulq %rcx, %rax")
             elif op in ["<", ">", "<=", ">=", "==", "!="]:
                 asm.append("    cmpq %rcx, %rax") # Compare left (%rax) and right (%rcx)
             
+                # To make (n == 0) return a 1 or 0 result in %rax:
+                set_instr = {
+                    "==": "sete",  "!=": "setne",
+                    "<":  "setl",  "<=": "setle",
+                    ">":  "setg",  ">=": "setge"
+                }[op]
+                
+                asm.append(f"    {set_instr} %al")  # Sets 8-bit %al to 1 or 0
+                asm.append("    movzbq %al, %rax") # Clears the rest of %rax
+            
             return "\n".join(asm)
+        
+
+        if n_type == "LogicalExpression":
+            op = node.get("operator")
+            if op == "||":
+                true_label = self.labels.new_label("LOGIC_TRUE")
+                end_label = self.labels.new_label("LOGIC_END")
+                
+                # Compile Left Side
+                left_asm = self.compile(node["left"])
+                # If left is True (not 0), jump to True
+                asm = [left_asm, "    cmpq $0, %rax", f"    jne {true_label}"]
+                
+                # Compile Right Side
+                right_asm = self.compile(node["right"])
+                asm += [right_asm, "    cmpq $0, %rax", f"    jne {true_label}"]
+                
+                # If both fail
+                asm += ["    movq $0, %rax", f"    jmp {end_label}"]
+                
+                # True Label
+                asm += [f"{true_label}:", "    movq $1, %rax", f"{end_label}:"]
+                return "\n".join(asm)
         
         # Handle Variable Declarations
         if n_type == "VariableDeclaration":
@@ -85,6 +129,54 @@ class Compiler:
                 asm.append(f"    movq %rax, {offset}(%rbp)")
             
             return "\n".join(asm)
+        
+        if n_type == "FunctionDeclaration":
+            func_name = node["id"]["name"]
+            params = node.get("params", [])
+            
+            # 1. Save global env and start a FRESH local env
+            global_env = self.env
+            self.env = Environment() 
+            
+            # 2. Map POSIX registers to parameters
+            arg_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
+            param_asm = []
+            for i, p in enumerate(params):
+                offset = self.env.declare(p["name"])
+                param_asm.append(f"    movq {arg_regs[i]}, {offset}(%rbp)")
+                
+            # 3. Compile the body
+            body_asm = self.compile(node["body"])
+            
+            # 4. Determine stack size for this function
+            stack_size = max((len(self.env.variables) * 8 + 15) & ~15, 16)
+
+            asm = [
+                f"{func_name}:",
+                "    pushq %rbp",
+                "    movq %rsp, %rbp",
+                f"    subq ${stack_size}, %rsp",
+                "\n".join(param_asm),
+                body_asm,
+                f"    # Default exit if no return statement is hit",
+                "    movq %rbp, %rsp",
+                "    popq %rbp",
+                "    ret"
+            ]
+            
+            # Restore global env for the next nodes
+            self.env = global_env
+            return "\n".join(asm)
+        
+        if n_type == "ReturnStatement":
+            # 1. Compile the expression to return (result goes to %rax)
+            value_asm = self.compile(node.get("argument"))
+            
+            # 2. Cleanup and return
+            return f"""{value_asm}
+            movq %rbp, %rsp
+            popq %rbp
+            ret"""
         
         if n_type == "Identifier":
             name = node.get("name")
@@ -228,6 +320,7 @@ class Compiler:
         
         if n_type == "CallExpression":
             callee = node["callee"]["name"]
+            args = node.get("arguments", [])
             if callee == "print":
                 # 1. Get the variable value into %rax (using Identifier logic)
                 arg_asm = self.compile(node["arguments"][0])
@@ -243,6 +336,19 @@ class Compiler:
                     "    call printf"        # Call C library function
                 ]
                 return "\n".join(asm)
+            else :
+                args = node.get("arguments", [])
+                arg_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
+                asm = []
+                # 1. Evaluate arguments and move them to registers
+                for i, arg in enumerate(args):
+                    asm.append(self.compile(arg)) # Result in %rax
+                    asm.append(f"    movq %rax, {arg_regs[i]}")
+                    
+                # 2. Call the function
+                asm.append(f"    call {callee}") # Return value will be in %rax
+                return "\n".join(asm)
+
         
         if n_type == "StringLiteral":
             label = self.labels.new_label("STR")
@@ -258,7 +364,7 @@ class Compiler:
         return f"/* Missing: {n_type} */"
 
 script_dir = os.path.dirname(__file__) 
-file_path = os.path.join(script_dir, '06-while-break.json')
+file_path = os.path.join(script_dir, '12-fact.json')
 
 with open(file_path, 'r') as f:
     ast = json.load(f)
