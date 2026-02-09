@@ -164,7 +164,7 @@ main:
     movq %rax, %rdx
     leaq .LC_PRINT_INT(%rip), %rcx
     call printf
+    movq $0, %rax
     addq $32, %rsp
     popq %rbp
     ret
-    
