@@ -9,6 +9,8 @@ class Compiler:
         self.env = Environment()
         self.labels = LabelManager()
         self.loop_stack = []
+        self.is_global_scope = True  # Start at the top level
+        self.global_vars = []
 
     def compile(self, node):
         if node is None :
@@ -23,16 +25,21 @@ class Compiler:
         if n_type == "Program":
             funcs = []
             main_body = []
+            # This loop fills main_body and populates self.global_vars
             for s in node.get("body", []):
                 if s["type"] == "FunctionDeclaration":
                     funcs.append(self.compile(s))
                 else:
                     # Compile body
                     main_body.append(self.compile(s))
+
+            # Start the output with the code 
             header = [".text"] + funcs
 
             # Header instructions
-            if self.data_section:
+            if self.global_vars or self.data_section:
+                header.append(".data")
+                header.extend(self.global_vars)
                 header.append(".section .rodata")
                 header.extend(self.data_section)
                 header.append(".text")
@@ -40,7 +47,7 @@ class Compiler:
             # Calculate total space needed (number of vars * 8)
             total_space = len(self.env.variables) * 8
             aligned_space = (total_space + 15) & ~15
-            stack_size = max(aligned_space, 16)
+            stack_size = max(aligned_space, 32)
 
             header.extend([
                 ".global main",
@@ -62,6 +69,23 @@ class Compiler:
         # Handle a single number (The Leaf)
         if n_type == "ExpressionStatement":
             return self.compile(node.get("expression"))
+        
+
+        if n_type == "UnaryExpression":
+            op = node.get("operator")
+            # 1. Compile the argument (result goes to %rax)
+            asm = [self.compile(node["argument"])]
+            
+            if op == "-":
+                # Negate the value in %rax
+                asm.append("    negq %rax")
+            elif op == "!":
+                # Logical NOT: 0 becomes 1, anything else becomes 0
+                asm.append("    cmpq $0, %rax")
+                asm.append("    sete %al")
+                asm.append("    movzbq %al, %rax")
+                
+            return "\n".join(asm)
         
         #  Handle Binary Expressions (Addition, Multiplication, etc.)
         if n_type == "BinaryExpression":
@@ -124,10 +148,21 @@ class Compiler:
             asm = []
             for decl in node.get("declarations", []):
                 var_name = decl["id"]["name"]
-                offset = self.env.declare(var_name)               
-                asm.append(self.compile(decl.get("init")))
-                asm.append(f"    movq %rax, {offset}(%rbp)")
-            
+                init_node = decl.get("init")
+
+
+                # Check if we are in the 'main' scope (global)
+                if self.is_global_scope: 
+                    init_val = init_node.get("value", 0) if init_node else 0
+                    # Add to a global data list instead of stack
+                    self.global_vars.append(f"{var_name}: .quad {init_val}")
+                    return "" 
+                else:
+                    # Standard local stack allocation
+                    offset = self.env.declare(var_name)               
+                    asm.append(self.compile(init_node))
+                    asm.append(f"    movq %rax, {offset}(%rbp)")
+                
             return "\n".join(asm)
         
         if n_type == "FunctionDeclaration":
@@ -144,7 +179,10 @@ class Compiler:
             for i, p in enumerate(params):
                 offset = self.env.declare(p["name"])
                 param_asm.append(f"    movq {arg_regs[i]}, {offset}(%rbp)")
-                
+
+            # Now inside a function
+            self.is_global_scope = False
+            
             # 3. Compile the body
             body_asm = self.compile(node["body"])
             
@@ -165,6 +203,7 @@ class Compiler:
             ]
             
             # Restore global env for the next nodes
+            self.is_global_scope = True   # Back to global scope
             self.env = global_env
             return "\n".join(asm)
         
@@ -181,8 +220,14 @@ class Compiler:
         if n_type == "Identifier":
             name = node.get("name")
             offset = self.env.get_offset(name)
-            return f"    movq {offset}(%rbp), %rax"
-        
+            if offset is not None:
+                # It's a local variable (like 'n')
+                return f"    movq {offset}(%rbp), %rax"
+            else:
+                # It's a global variable (like 'x'). 
+                # We access it relative to the Instruction Pointer (%rip)
+                return f"    movq {name}(%rip), %rax"
+                
 
         if n_type == "BreakStatement":
             if not self.loop_stack: return "    # Error: break outside loop"
@@ -260,14 +305,20 @@ class Compiler:
             
             # 1. Compile the right-hand side (value goes to %rax)
             asm = [self.compile(node["right"])]
+
+            # Determine memory location
+            if offset is not None:
+                target_loc = f"{offset}(%rbp)" # Local
+            else:
+                target_loc = f"{target_name}(%rip)" # Global
             
             # 2. Apply the operation to the memory location
             if op == "=":
-                asm.append(f"    movq %rax, {offset}(%rbp)")
+                asm.append(f"    movq %rax, {target_loc}")
             elif op == "+=":
-                asm.append(f"    addq %rax, {offset}(%rbp)")
+                asm.append(f"    addq %rax, {target_loc}")
             elif op == "-=":
-                asm.append(f"    subq %rax, {offset}(%rbp)")
+                asm.append(f"    subq %rax, {target_loc}")
             
             return "\n".join(asm)
         
@@ -304,8 +355,8 @@ class Compiler:
             self.loop_stack.pop()
             return "\n".join(asm)
 
-        if n_type == "EmptyStatement" or n_type == "FunctionDeclaration":
-            return "" # Ignore these for now
+        if n_type == "EmptyStatement":
+            return ""
         
         if n_type == "NumericLiteral":
             val = node.get("value")
@@ -348,6 +399,46 @@ class Compiler:
                 # 2. Call the function
                 asm.append(f"    call {callee}") # Return value will be in %rax
                 return "\n".join(asm)
+        
+
+        if n_type == "SwitchStatement":
+            end_label = self.labels.new_label("SWITCH_END")
+            # Use the loop_stack so 'break' knows to jump to end_label
+            self.loop_stack.append((None, end_label))
+            
+            asm = []
+            # 1. Evaluate the discriminant (e.g., 'x')
+            asm.append(self.compile(node["discriminant"]))
+            asm.append("    pushq %rax") # Keep 'x' safe on the stack
+            
+            case_labels = []
+            # 2. Generate labels for each case body
+            for i, case in enumerate(node["cases"]):
+                case_labels.append(self.labels.new_label(f"CASE_{i}"))
+
+            # 3. Comparison Phase
+            for i, case in enumerate(node["cases"]):
+                if case["test"]: # Standard 'case'
+                    asm.append(self.compile(case["test"])) # Result in %rax
+                    asm.append("    movq %rax, %rcx")
+                    asm.append("    movq (%rsp), %rax") # Get discriminant back
+                    asm.append("    cmpq %rcx, %rax")
+                    asm.append(f"    je {case_labels[i]}")
+                else: # This is the 'default' case
+                    default_label = case_labels[i]
+
+            # If no match, jump to default or end
+            asm.append(f"    jmp {default_label if 'default_label' in locals() else end_label}")
+
+            # 4. Body Phase
+            for i, case in enumerate(node["cases"]):
+                asm.append(f"{case_labels[i]}:")
+                asm.append(self.compile({"type": "BlockStatement", "body": case["consequent"]}))
+
+            asm.append(f"{end_label}:")
+            asm.append("    addq $8, %rsp") # Clean up discriminant
+            self.loop_stack.pop()
+            return "\n".join(asm)
 
         
         if n_type == "StringLiteral":
@@ -364,7 +455,7 @@ class Compiler:
         return f"/* Missing: {n_type} */"
 
 script_dir = os.path.dirname(__file__) 
-file_path = os.path.join(script_dir, '12-fact.json')
+file_path = os.path.join(script_dir, '13-switch.json')
 
 with open(file_path, 'r') as f:
     ast = json.load(f)
